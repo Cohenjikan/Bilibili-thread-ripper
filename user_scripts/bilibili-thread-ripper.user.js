@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 线程撕裂者
 // @namespace    https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @version      2026.9.29.1
+// @version      2026.9.29.2
 // @description  保留哔哩哔哩原生播放器，通过多 CDN、多 Range 并发下载改善视频缓冲速度。
 // @icon         https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/icons/icon-128.png
 // @author       MrTangLuyao
@@ -42,6 +42,11 @@ document.documentElement?.setAttribute("data-btr-userscript", "");
 // does not answer, the settings stay in this site's localStorage as before, which is kept per
 // subdomain. Changes made in another tab arrive from the manager, or, where the manager does
 // not report them, are read again when this tab comes back into view.
+//
+// What the manager holds is also copied to this site's localStorage. Each manager keeps its
+// own storage, so a viewer who moves to another one (say from Tampermonkey to
+// Violentmonkey) would otherwise start over: the new one takes the settings over from that
+// copy the first time it runs.
 const chrome = (() => {
   const PREFIX = "BTR_Userscript.";
   const AREAS = ["sync", "local"];
@@ -115,18 +120,23 @@ const chrome = (() => {
   const cache = {};
   const loads = {};
   let backend = mark ? managerBackend : localBackend;
+  const keepCopy = (area, value) => {
+    if (backend !== managerBackend) return;
+    try { localStorage.setItem(PREFIX + area, JSON.stringify(value)); } catch (_error) {}
+  };
   // A manager that marked the page but never answers must not keep the settings from loading.
   const load = (area) => {
     loads[area] ||= (backend === managerBackend
       ? Promise.race([backend.load(area), new Promise((_resolve, reject) => setTimeout(() => reject(new Error("no answer")), 3000))])
         .catch(() => { backend = localBackend; return backend.load(area); })
-      : backend.load(area)).then((value) => { cache[area] = value; return value; });
+      : backend.load(area)).then((value) => { cache[area] = value; keepCopy(area, value); return value; });
     return loads[area];
   };
   // What the storage now holds after a change, from this tab or from another one.
   const settle = (area, value) => {
     const before = cache[area] || {};
     cache[area] = value;
+    keepCopy(area, value);
     notify(diff(before, value), area);
   };
 
@@ -3350,7 +3360,7 @@ const chrome = (() => {
       urlDeadlineSeconds,
       video,
       getDebug: () => ({
-        version: "2026.9.29.1",
+        version: "2026.9.29.2",
         architecture: "bilibili-native-ui-progressive-mse-0.8-core",
         quality: qualityLabel(selectedVideo),
         qualityId: Number(selectedVideo?.id) || 0,
@@ -4152,13 +4162,19 @@ const chrome = (() => {
   const THREAD_OPTIONS = [4, 8, 16, 32, 64, 128];
   const MAX_CUSTOM_HOSTS = 32;
   const HOST_GROUPS = [["大陆节点", cdn.MAINLAND_HOSTS], ["海外节点", cdn.OVERSEAS_HOSTS]];
+  const PROJECT_URL = "https://github.com/MrTangLuyao/Bilibili-thread-ripper";
+  // GitHub's mark.
+  const GITHUB_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>`;
   const KNOWN_HOSTS = HOST_GROUPS.flatMap(([, hosts]) => hosts);
 
   const PANEL_HTML = `
     <main>
       <header>
         <div class="logo" aria-hidden="true">B</div>
-        <h1>线程撕裂者</h1>
+        <div class="title">
+          <h1>线程撕裂者</h1>
+          <a id="github-link" class="github-link" href="${PROJECT_URL}" target="_blank" rel="noopener noreferrer" title="在 GitHub 上查看项目" aria-label="在 GitHub 上查看项目">${GITHUB_ICON}</a>
+        </div>
         <label class="switch" title="启用或停用">
           <input id="enabled" type="checkbox">
           <span></span>
@@ -4227,6 +4243,12 @@ const chrome = (() => {
             <label><input type="checkbox" data-debug-category="settings">设置变化</label>
             <label><input type="checkbox" data-debug-category="other">其他日志</label>
           </div>
+          <div class="debug-copy">
+            <button id="debug-copy" type="button">复制诊断信息</button>
+            <span id="debug-copy-status" class="debug-copy-status" role="status"></span>
+          </div>
+          <p class="debug-copy-note">反馈问题时点一下，把复制下来的内容贴到 issue 里。里面没有 Cookie、账号信息和视频的下载地址。</p>
+          <textarea id="debug-copy-text" class="debug-copy-text" readonly hidden aria-label="诊断信息"></textarea>
         </fieldset>
       </section>
 
@@ -4244,6 +4266,11 @@ const chrome = (() => {
     header { display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 11px; margin-bottom: 22px; }
     .logo { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 8px; color: #fff; font-size: 23px; font-weight: 800; background: #fb7299; }
     h1 { margin: 0; font-size: 17px; letter-spacing: .2px; }
+    .title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .github-link { display: grid; flex: none; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: #949baa; transition: color 160ms ease, background 160ms ease; }
+    .github-link:hover { color: #fff; background: #292d35; }
+    .github-link:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    .github-link svg { width: 18px; height: 18px; }
     .switch { position: relative; width: 42px; height: 24px; }
     .switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
     .switch span { position: absolute; inset: 0; border-radius: 999px; background: #313a4c; cursor: pointer; transition: 160ms ease; }
@@ -4314,6 +4341,15 @@ const chrome = (() => {
     .debug-filter-options label { display: flex; align-items: center; gap: 7px; color: #c9ced9; font-size: 12px; cursor: pointer; }
     .debug-filter-options input { flex: none; width: 15px; height: 15px; margin: 0; accent-color: #fb7299; cursor: pointer; }
     .debug-filter-actions button:focus-visible, .debug-filter-options input:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+    .debug-copy { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+    .debug-copy button { padding: 6px 12px; border: 1px solid #fb7299; border-radius: 6px; background: #292d35; color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+    .debug-copy button:hover { background: #fb7299; }
+    .debug-copy button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+    .debug-copy-status { color: #9fd9a8; font-size: 12px; }
+    .debug-copy-status.failed { color: #f28b85; }
+    .debug-copy-note { margin: 8px 0 0; color: #949baa; font-size: 11px; line-height: 1.5; }
+    .debug-copy-text { width: 100%; height: 120px; margin-top: 8px; padding: 6px; border: 1px solid #444b57; border-radius: 6px; background: #20232a; color: #d9dee8; font: 11px/1.4 Consolas, monospace; resize: vertical; }
+    .debug-copy-text[hidden] { display: none; }
     .current-threads { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding: 16px; border: 1px solid #30343d; border-radius: 8px; background: #20232a; color: #c9ced9; font-size: 13px; }
     .current-threads b { color: #fff; font-size: 20px; font-variant-numeric: tabular-nums; }
     .btr-close { position: sticky; bottom: 12px; display: block; width: calc(100% - 32px); margin: 0 16px 16px; padding: 8px; border: 1px solid #444b57; border-radius: 6px; background: #292d35; color: #d9dee8; font: inherit; font-size: 13px; cursor: pointer; box-shadow: 0 -6px 12px #17191f; }
@@ -4332,6 +4368,41 @@ const chrome = (() => {
   let current = null;
   // bridge.js sends the stored settings when they load or change, and the page its stats.
   let latestSettings = null;
+  // The debug notices shown on this page, newest last, for the diagnostic copy.
+  const noticeHistory = [];
+
+  // Everything needed to look into a report, as text to paste into an issue. The page's own
+  // reports already leave out download addresses and account data; any address that is left
+  // is cut down to its host and path, so no signature or token goes along.
+  function diagnostics() {
+    const safely = (read) => { try { return read(); } catch (error) { return `读取失败：${String(error?.message || error)}`; } };
+    const parse = (text) => { try { return JSON.parse(text); } catch (_error) { return text; } };
+    const sections = [
+      ["环境", {
+        BTR: "2026.9.29.2",
+        脚本管理器: document.documentElement?.getAttribute("data-btr-userscript-manager") || "未知",
+        浏览器: navigator.userAgent,
+        页面: `${location.origin}${location.pathname}`,
+        时间: new Date().toISOString(),
+        语言: navigator.language,
+        窗口: `${root.innerWidth}x${root.innerHeight}`
+      }],
+      ["设置", latestSettings || "设置还没加载"]
+    ];
+    const video = root.__biliThreadRipperDebug;
+    if (typeof video?.report === "function") sections.push(["视频接管", safely(() => parse(video.report()))]);
+    const auto = root.__BILI_IDM_DOWNLOADER_FACTORY__?.autoConcurrency;
+    if (typeof auto?.status === "function") sections.push(["自动线程数", safely(() => auto.status())]);
+    // The live player often sits in a live.bilibili.com iframe, where its module runs.
+    const liveModules = [root, ...[...document.querySelectorAll("iframe")].map((frame) => safely(() => frame.contentWindow))]
+      .map((view) => safely(() => view?.__biliThreadRipperLiveDebug)).filter((api) => api && typeof api.getStats === "function");
+    liveModules.forEach((api, index) => sections.push([liveModules.length > 1 ? `直播模块 ${index + 1}` : "直播模块", safely(() => ({ stats: api.getStats(), context: api.getContext?.() }))]));
+    sections.push(["最近的 Debug 提示", noticeHistory.length
+      ? noticeHistory.map((item) => `${new Date(item.at).toISOString().slice(11, 19)} [${item.level}/${item.category}] ${item.title}${item.count > 1 ? ` ×${item.count}` : ""}${item.detail ? ` — ${item.detail}` : ""}`).join("\n")
+      : "（还没有。打开 Debug 模式以后显示过的提示才会记在这里）"]);
+    const text = sections.map(([title, value]) => `## ${title}\n${typeof value === "string" ? value : JSON.stringify(value, null, 1)}`).join("\n\n");
+    return text.replace(/(https?:\/\/[^\s"'?#]+)[?#][^\s"']*/gi, "$1");
+  }
   let latestStats = null;
   const post = (type, payload) => root.postMessage({ channel: CHANNEL, type, payload }, "*");
 
@@ -4519,6 +4590,26 @@ const chrome = (() => {
     for (const input of debugCategoryInputs) input.addEventListener("change", saveDebugCategories);
     $("debug-select-all").addEventListener("click", () => { for (const input of debugCategoryInputs) input.checked = true; saveDebugCategories(); });
     $("debug-select-none").addEventListener("click", () => { for (const input of debugCategoryInputs) input.checked = false; saveDebugCategories(); });
+    const copyStatus = $("debug-copy-status");
+    const copyText = $("debug-copy-text");
+    let copyStatusTimer = null;
+    $("debug-copy").addEventListener("click", async () => {
+      const text = diagnostics();
+      let copied = false;
+      try { await navigator.clipboard.writeText(text); copied = true; } catch (_error) {}
+      if (!copied) {
+        // Without the clipboard API (or its permission): select the text for the viewer.
+        copyText.hidden = false;
+        copyText.value = text;
+        copyText.focus();
+        copyText.select();
+        try { copied = document.execCommand("copy"); } catch (_error) {}
+      }
+      copyStatus.classList.toggle("failed", !copied);
+      copyStatus.textContent = copied ? "已复制" : "没能自动复制，请手动复制下面的内容";
+      clearTimeout(copyStatusTimer);
+      if (copied) copyStatusTimer = setTimeout(() => { copyStatus.textContent = ""; }, 2500);
+    });
 
     // Keys typed into the panel belong to it. The shadow root hides the input from the page,
     // so the player's shortcuts (space, F, arrows) would otherwise react to them.
@@ -4748,6 +4839,11 @@ const chrome = (() => {
       current?.render(latestSettings);
     } else if (event.data.type === "stats") {
       latestStats = event.data.payload;
+    } else if (event.data.type === "debug-notices") {
+      for (const item of [].concat(event.data.payload || [])) {
+        noticeHistory.push({ at: Number(item?.at) || Date.now(), level: String(item?.level || "info"), category: String(item?.category || "other"), title: String(item?.title || ""), detail: String(item?.detail || ""), count: Number(item?.count) || 1 });
+        if (noticeHistory.length > 100) noticeHistory.shift();
+      }
     } else if (event.data.type === "open-settings" && root.top === root) {
       // "自定义" in the gear menu.
       open();
@@ -4838,7 +4934,7 @@ const chrome = (() => {
   });
 
   const stats = {
-    version: "2026.9.29.1",
+    version: "2026.9.29.2",
     architecture: "bilibili-native-ui-progressive-mse-0.8-core",
     mode: settings.mode,
     playerState: "waiting",
@@ -6199,11 +6295,11 @@ const chrome = (() => {
         const { timeline = [], ...rest } = debug;
         // Node names and states only: no download address or account data.
         return JSON.stringify({
-          version: stats.version, at: Math.round(performance.now()), settings: { takeover: settings.takeover, mode: settings.mode, customHosts: settings.customHosts.slice(), concurrency: settings.concurrency, codec: nativeCodec() || "default" },
+          version: stats.version, scriptManager: document.documentElement?.getAttribute("data-btr-userscript-manager") || "", at: Math.round(performance.now()), settings: { takeover: settings.takeover, mode: settings.mode, customHosts: settings.customHosts.slice(), concurrency: settings.concurrency, codec: nativeCodec() || "default" },
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },
-      version: "2026.9.29.1"
+      version: "2026.9.29.2"
     })
   });
   publish();
@@ -6457,7 +6553,7 @@ const chrome = (() => {
 
   // ---- stats for the settings panel ----
   const stats = {
-    version: "2026.9.29.1",
+    version: "2026.9.29.2",
     architecture: "live-segment-ripper",
     mode: "live",
     playerState: "waiting",
@@ -6921,7 +7017,7 @@ const chrome = (() => {
         hosts: context.pool.status()
       },
       getStats: () => ({ ...stats }),
-      version: "2026.9.29.1"
+      version: "2026.9.29.2"
     })
   });
   publish();
@@ -7238,7 +7334,7 @@ const chrome = (() => {
   "use strict";
 
   const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
-  const VERSION = "2026.9.29.1";
+  const VERSION = "2026.9.29.2";
   const notices = globalThis.__BTR_NOTIFICATION_VIEW__;
   const ERROR_NOTICE_ID = "__bilibili_thread_ripper_error_notice__";
   const ERROR_NOTICE_STYLE_ID = "__bilibili_thread_ripper_error_notice_style__";
@@ -7525,8 +7621,24 @@ const chrome = (() => {
 // Runs wherever the userscript manager puts the script. The accelerator itself has to run in
 // the bilibili page, so pageCode is started there. The manager's menu only sends a page
 // event that opens the settings panel.
+//
+// pageCode is called directly only when this script already runs as a page script (window
+// is the page's own). Otherwise it is injected as a script element: with any @grant,
+// Tampermonkey and Violentmonkey both wrap window in a sandbox that keeps globals to the
+// script, and in Violentmonkey's "content" mode (the one the header asks for) even
+// unsafeWindow is the content script's global rather than the page's.
 const LOADED = "data-btr-userscript";
 const pageWindow = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
+
+// Which manager runs the script, its version and injection mode, for the diagnostic report
+// (Tampermonkey and Violentmonkey both describe themselves in GM_info).
+const MANAGER_MARK = "data-btr-userscript-manager";
+function describeManager() {
+  try {
+    const info = typeof GM_info === "object" && GM_info ? GM_info : null;
+    return info ? [info.scriptHandler, info.version, info.injectInto].filter(Boolean).map(String).join(" ").slice(0, 80) : "";
+  } catch (_error) { return ""; }
+}
 
 // The settings live in the manager's storage, which every bilibili subdomain shares; this
 // site's localStorage is separate on each one, so a setting changed on space.bilibili.com
@@ -7598,6 +7710,8 @@ function inject() {
 // through the manager ("live": the manager also reports other tabs' changes).
 function start() {
   if (manager) document.documentElement.setAttribute(STORAGE_MARK, managerReportsChanges ? "manager live" : "manager");
+  const described = describeManager();
+  if (described) document.documentElement.setAttribute(MANAGER_MARK, described);
   if (pageWindow === window) pageCode();
   else inject();
 }
