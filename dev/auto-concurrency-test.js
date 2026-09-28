@@ -97,9 +97,11 @@ test("a low buffer that has not grown over a second while bytes arrive is pressu
   assert.equal(run([20,19,18,17,16,15,14,13,12,11]),false,"20 seconds ahead is comfortable");
   assert.equal(run([4,4,4,4,4,4,4,4,4,4],false),false,"paused counts for nothing");
   auto.newSession();
+  assert.equal(auto.threads(),16,"a new session opens with 16 threads");
+  clock.at+=3000;
   assert.equal(run([4,4,4,4]),false,"a new session starts the watch afresh: under a second of samples, no verdict");
   assert.equal(run([4,4,4,4,4]),true,"a second of no growth on top of a second of samples");
-  assert.equal(auto.threads(),16);
+  assert.equal(auto.threads(),24);
 });
 
 test("a server refusing the load steps the count back, and nothing climbs past that level for three minutes",()=>{
@@ -122,16 +124,87 @@ test("a server refusing the load steps the count back, and nothing climbs past t
   assert.equal(auto.stall(),true);
 });
 
-test("a new session drops the old trial and its measurements, keeps the level and the rests",()=>{
+test("a new session drops the old trial and its measurements, keeps the rests",()=>{
   const {auto,clock,flow}=controller();
   clock.at+=5000;flow(1e6,5000);
   auto.stall();assert.equal(auto.threads(),12);
   auto.newSession();                    // the viewer switched videos: 0.5 MB/s is the new video's rate, not a lost trial
-  flow(0.5e6,11000);
-  assert.equal(auto.threads(),12);
   assert.equal(auto.status().trial,null);
-  auto.pushback(412);auto.newSession();
-  assert.equal(JSON.stringify(auto.status().resting.map(r=>[r.threads,r.hard])),"[[12,true]]","rests survive a new session");
+  assert.equal(auto.threads(),16,"the start runs with 16");
+  flow(0.5e6,11000);
+  assert.equal(auto.threads(),16,"no trial left to judge");
+  auto.pushback(412);                   // 16 refused: back to 12
+  auto.newSession();
+  assert.equal(auto.threads(),12,"a start does not climb onto a refused level");
+  assert.equal(JSON.stringify(auto.status().resting.map(r=>[r.threads,r.hard])),"[[16,true]]","rests survive a new session");
+});
+
+test("each start opens with 16 threads and comes back down to the page's level once well ahead",()=>{
+  const {auto,clock,changes}=controller();
+  clock.at+=5000;
+  auto.newSession();
+  assert.equal(auto.threads(),16);
+  assert.equal(changes.at(-1).reason,"开头先用 16 线程");
+  assert.equal(auto.status().startup.base,8);
+  const feed=(ahead,ms)=>{for(let t=0;t<ms;t+=250){clock.at+=250;auto.activity();auto.buffer(ahead,true);}};
+  feed(9,4000);
+  assert.equal(auto.threads(),16,"9 s ahead is not well ahead yet");
+  feed(16,250);
+  assert.equal(auto.threads(),12,"well ahead: one step down");
+  feed(16,1000);
+  assert.equal(auto.threads(),12,"one step per cooldown");
+  feed(16,2000);
+  assert.equal(auto.threads(),8);
+  assert.equal(changes.at(-1).reason,"开头已经跟上，线程数降到 8");
+  assert.equal(auto.status().startup,null,"back at the page's level: the start is over");
+  feed(30,5000);
+  assert.equal(auto.threads(),8,"the usual rules never step down on their own");
+});
+
+test("not keeping up at the start climbs as usual, and the start ends at the higher count",()=>{
+  const {auto,clock}=controller();
+  clock.at+=5000;
+  auto.newSession();assert.equal(auto.threads(),16);
+  assert.equal(auto.stall(),false,"within the cooldown of the start's own step");
+  clock.at+=2600;
+  assert.equal(auto.stall(),true);assert.equal(auto.threads(),24);
+  assert.equal(auto.status().startup,null);
+  for(let t=0;t<5000;t+=250){clock.at+=250;auto.buffer(20,true);}
+  assert.equal(auto.threads(),24,"catching up afterwards does not bring it down: the usual rules decide now");
+});
+
+test("a start that has not caught up in half a minute keeps its count, and the next start stays there",()=>{
+  const {auto,clock}=controller();
+  clock.at+=5000;
+  auto.newSession();
+  // Growing slowly: never 15 s ahead, never pressure.
+  for(let t=0,ahead=6;t<31000;t+=250){clock.at+=250;auto.activity();ahead+=0.02;auto.buffer(ahead,true);}
+  assert.equal(auto.threads(),16);
+  assert.equal(auto.status().startup,null);
+  auto.newSession();
+  assert.equal(auto.threads(),16);
+  assert.equal(auto.status().startup,null,"16 is the page's level now: nothing to come back down to");
+  for(let t=0;t<5000;t+=250){clock.at+=250;auto.buffer(20,true);}
+  assert.equal(auto.threads(),16);
+});
+
+test("a seek during the start keeps the page's own level as the one to come back to",()=>{
+  const {auto,clock}=controller();
+  clock.at+=5000;
+  auto.newSession();clock.at+=1000;auto.newSession();
+  assert.equal(auto.threads(),16);
+  assert.equal(auto.status().startup.base,8);
+  for(let t=0;t<6000;t+=250){clock.at+=250;auto.buffer(20,true);}
+  assert.equal(auto.threads(),8);
+});
+
+test("a start never climbs onto a level the server refused",()=>{
+  const {auto,clock}=controller();
+  clock.at+=5000;auto.stall();assert.equal(auto.threads(),12);
+  auto.pushback(429);assert.equal(auto.threads(),8);   // 12 refused
+  auto.newSession();
+  assert.equal(auto.threads(),8);
+  assert.equal(auto.status().startup,null);
 });
 
 test("delivery samples are bounded to the window",()=>{

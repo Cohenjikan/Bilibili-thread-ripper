@@ -104,7 +104,7 @@
     backAfterFullscreen,
     noOnboarding,
     defaultSpot,
-    faintUntilHovered: opacity > 0.15 && opacity <= 0.5,
+    faintUntilHovered: opacity >= 0.5 && opacity <= 0.7,
     stayedWhereDropped,
     savedFreeSpot,
     snappedLeft,
