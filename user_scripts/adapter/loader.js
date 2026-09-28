@@ -1,8 +1,24 @@
 // Runs wherever the userscript manager puts the script. The accelerator itself has to run in
 // the bilibili page, so pageCode is started there. The manager's menu only sends a page
 // event that opens the settings panel.
+//
+// pageCode is called directly only when this script already runs as a page script (window
+// is the page's own). Otherwise it is injected as a script element: with any @grant,
+// Tampermonkey and Violentmonkey both wrap window in a sandbox that keeps globals to the
+// script, and in Violentmonkey's "content" mode (the one the header asks for) even
+// unsafeWindow is the content script's global rather than the page's.
 const LOADED = "data-btr-userscript";
 const pageWindow = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
+
+// Which manager runs the script, its version and injection mode, for the diagnostic report
+// (Tampermonkey and Violentmonkey both describe themselves in GM_info).
+const MANAGER_MARK = "data-btr-userscript-manager";
+function describeManager() {
+  try {
+    const info = typeof GM_info === "object" && GM_info ? GM_info : null;
+    return info ? [info.scriptHandler, info.version, info.injectInto].filter(Boolean).map(String).join(" ").slice(0, 80) : "";
+  } catch (_error) { return ""; }
+}
 
 // The settings live in the manager's storage, which every bilibili subdomain shares; this
 // site's localStorage is separate on each one, so a setting changed on space.bilibili.com
@@ -74,6 +90,8 @@ function inject() {
 // through the manager ("live": the manager also reports other tabs' changes).
 function start() {
   if (manager) document.documentElement.setAttribute(STORAGE_MARK, managerReportsChanges ? "manager live" : "manager");
+  const described = describeManager();
+  if (described) document.documentElement.setAttribute(MANAGER_MARK, described);
   if (pageWindow === window) pageCode();
   else inject();
 }

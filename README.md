@@ -40,9 +40,13 @@
 [视频安装步骤(参考2P 通过油猴脚本安装)](https://www.bilibili.com/video/BV1Teec6BE3s)
 
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件
-2. 点这里：[**安装线程撕裂者**](https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js)
-3. 打开 B 站视频，完事
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件 或者 [暴力猴](https://violentmonkey.github.io/) 插件。
+2. ⚠️（对于Chromium内核如Chrome/Edge **必做**）在扩展程序内，点击 Tampermonkey 或 暴力猴 插件的 详情，打开**允许运行用户脚本**。
+
+   <img src="pics/install-demo.gif" alt="在扩展程序里打开脚本管理器的“允许运行用户脚本”" width="720">
+
+3. ❗点这里：[**安装线程撕裂者**](https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js)
+4. 打开任意 B 站视频，安装完成。你应该能打开设置菜单 能看到BTR的悬浮球设置按钮。
 
 #### ⚠️如果是早期通过视频了解的这个插件 注意：针对Chrome的独立版插件已经停止更新。请卸载独立插件版插件并按步骤安装基于油猴脚本的新版BTR。⚠️
 
@@ -52,17 +56,18 @@
 
 - 有新版会自动更新，如果有更新弹窗 请点击 更新
 
-- Chrome/Edge/基于Chromium内核的其他浏览器务必前往：扩展管理 → Tampermonkey → 详情 → 打开“允许用户脚本”（老版本是打开“开发者模式”）
+- Chrome/Edge/基于Chromium内核的其他浏览器务必前往：扩展管理 → Tampermonkey（或暴力猴）→ 详情 → 打开“允许用户脚本”（老版本是打开“开发者模式”）
 
 - Safari 浏览器建议开启兼容模式
 
 - 如果你曾经安装过插件版，先在扩展管理里把它移除，再装油猴脚本。请不要同时开启两个版本。
 
-- BTR设置位于任意B站页面的悬浮球 或 点击 Tampermonkey → 线程撕裂者设置
+- BTR设置位于任意B站页面的悬浮球 或 点击 Tampermonkey（或暴力猴）→ 线程撕裂者设置
 
   <p>
-    <img src="pics/image-20260927005201393.png" alt="B 站页面上的 BTR 悬浮球" height="280">
-    <img src="pics/image-20260927005246460.png" alt="Tampermonkey 菜单里的线程撕裂者设置" height="280">
+    <img src="pics/btr_ball.png" alt="B 站页面上的 BTR 悬浮球" height="220">
+    <img src="pics/image-20260927005246460.png" alt="Tampermonkey 菜单里的线程撕裂者设置" height="220">
+    <img src="pics/vio_mky_demo.png" alt="暴力猴菜单里的线程撕裂者设置" height="220">
   </p>
 
 ## 建议设置
@@ -79,7 +84,7 @@
 | 设备性能弱 | 大陆 CDN | 4 到 8 |
 | 本地网络连接大陆网太差 | 海外 CDN | 自动 |
 
-BTR有三个设置入口：设置菜单可以点击Bilibili网页端的BTR悬浮窗 或 再B站打开情况下点击 Tampermonkey->Bilibili线程撕裂者->线程撕裂者设置 打开全面设置。或者在播放器中点击 设置在播放器 ⚙ → 更多播放设置。
+BTR有三个设置入口：设置菜单可以点击Bilibili网页端的BTR悬浮窗 或 再B站打开情况下点击 Tampermonkey（或暴力猴）->Bilibili线程撕裂者->线程撕裂者设置 打开全面设置。或者在播放器中点击 设置在播放器 ⚙ → 更多播放设置。
 
 CDN 除了大陆和海外，还可以选“自定义”：勾选已知的服务器，或者手动添加 B 站的视频服务器地址（bilivideo.com、akamaized.net 等），插件只用你选的这些。一个都没选时按大陆 CDN 下载。
 
@@ -218,7 +223,7 @@ BTR的直播加速刚刚开始适配，还在探索中，效果可能有限，�
 
 如果你要反馈“还是卡”，最好一起提供这些信息：
 
-- 浏览器和 Tampermonkey 的版本，BTR 的版本；
+- 浏览器和 Tampermonkey（或暴力猴）的版本，BTR 的版本；
 - 所在国家或地区以及网络运营商；
 - 视频 BV 号、清晰度和编码；
 - CDN 模式与线程数；

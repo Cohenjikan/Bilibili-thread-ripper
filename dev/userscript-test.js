@@ -145,7 +145,24 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
     await panel.locator("#debug-filters").waitFor();
     assert.equal(await panel.locator("[data-debug-category]:checked").count(), 6);
     await page.locator(".mode").first().waitFor();
-    console.log("PASS 设置面板：开关、线程、Debug 分类和实时线程数都能用");
+    // The GitHub mark next to the title opens the project in a new tab.
+    const github = panel.locator("#github-link");
+    assert.deepEqual([await github.getAttribute("href"), await github.getAttribute("target")], ["https://github.com/MrTangLuyao/Bilibili-thread-ripper", "_blank"]);
+    assert.equal(await panel.locator("h1").textContent(), "线程撕裂者");
+    // With Debug on, "复制诊断信息" copies what a bug report needs, without signed addresses.
+    await page.evaluate(() => {
+      window.__copied = null;
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__copied = text; } } });
+      __BTR_RUNTIME_NOTICES__.log("测试用的提示", "https://upos-sz-mirrorali.bilivideo.com/a.m4s?deadline=1&upsig=secret", "info", "", "", "download");
+    });
+    await page.waitForTimeout(400);
+    await panel.locator("#debug-copy").click();
+    await page.waitForFunction(() => typeof window.__copied === "string");
+    const copied = await page.evaluate(() => window.__copied);
+    for (const part of ["## 环境", `"BTR": "${version}"`, "## 设置", "## 视频接管", "## 最近的 Debug 提示", "测试用的提示"]) assert.ok(copied.includes(part), `the copy lacks ${part}`);
+    assert.equal(/upsig|deadline=/.test(copied), false, "a signed address got into the copy");
+    assert.match(await panel.locator("#debug-copy-status").textContent(), /已复制/);
+    console.log("PASS 设置面板：开关、线程、Debug 分类和实时线程数都能用；标题旁的 GitHub 图标指向项目；Debug 模式下能复制诊断信息，里面没有带签名的地址");
 
     // Closing stops the status polling; opening again starts clean.
     await page.keyboard.press("Escape");
@@ -257,18 +274,21 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
 
     // Settings in the manager's storage, shared by every bilibili subdomain. Separate browser
     // contexts stand in for subdomains: each has its own localStorage, all share the store.
-    const gmStore = new Map();
+    const gmStores = new Map();
+    const gmStore = { get: key => gmStores.get("1")?.get(key) };
     const gmPages = new Set();
     const managerTab = async (seed) => {
       const context = await browser.newContext();
       if (seed) await context.addInitScript(value => { if (!sessionStorage.getItem("seeded")) { localStorage.setItem("BTR_Userscript.sync", value); sessionStorage.setItem("seeded", "1"); } }, JSON.stringify(seed));
-      await context.exposeBinding("__gmCall", async (source, op, key, value) => {
-        if (op === "get") return gmStore.get(key);
-        const old = gmStore.get(key);
-        gmStore.set(key, value);
+      await context.exposeBinding("__gmCall", async (source, op, key, value, storeId = "1") => {
+        if (!gmStores.has(storeId)) gmStores.set(storeId, new Map());
+        const store = gmStores.get(storeId);
+        if (op === "get") return store.get(key);
+        const old = store.get(key);
+        store.set(key, value);
         for (const other of gmPages) {
           if (other === source.page || other.isClosed()) continue;
-          await other.evaluate(([name, before, after]) => __gmListeners.filter(item => item.key === name).forEach(item => item.callback(name, before, after, true)), [key, old, value]).catch(() => {});
+          await other.evaluate(([name, before, after, id]) => { if (window.__gmStoreId === id) __gmListeners.filter(item => item.key === name).forEach(item => item.callback(name, before, after, true)); }, [key, old, value, storeId]).catch(() => {});
         }
       });
       const tab = await context.newPage();
@@ -288,15 +308,15 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
     await video.goto(`${origin}?gm=live`);
     await modeOf(video, "overseas");
     assert.deepEqual(await settingsOf(video).then(value => [value.autoConcurrency, value.concurrency]), [false, 16]);
-    // A change on one shows on the other at once, is stored for both, and nothing lands in
-    // that subdomain's own localStorage. A reload keeps it.
+    // A change on one shows on the other at once, is stored for both, and each subdomain keeps
+    // a copy in its own localStorage. A reload keeps it.
     await openSettings(space);
     const spacePanel = space.locator(`${settingsHost} .btr-popup`);
     await spacePanel.waitFor();
     await spacePanel.locator('input[name="mode"][value="mainland"]').check({ force: true });
     await modeOf(video, "mainland");
     assert.equal(JSON.parse(gmStore.get("sync")).mode, "mainland");
-    assert.equal(await video.evaluate(() => localStorage.getItem("BTR_Userscript.sync")), null);
+    assert.equal(JSON.parse(await video.evaluate(() => localStorage.getItem("BTR_Userscript.sync"))).mode, "mainland", "the other subdomain's copy follows");
     await video.goto(`${origin}?gm=live`);
     await modeOf(video, "mainland");
     // A manager that does not report other tabs' changes: the tab reads the storage again
@@ -315,6 +335,16 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
     await modeOf(injectedTab, "overseas");
     await spacePanel.locator('input[name="mode"][value="mainland"]').check({ force: true });
     await modeOf(injectedTab, "mainland");
+    // The diagnostic report names the manager (here one that describes itself like
+    // Violentmonkey in its "content" mode), its version and injection mode.
+    assert.equal(JSON.parse(await injectedTab.evaluate(() => __biliThreadRipperDebug.report())).scriptManager, "Violentmonkey 2.49.0 content");
+    // Moving to another manager (its storage empty): it takes the latest settings over from
+    // this subdomain's copy, not the old ones from before settings moved to the manager.
+    await spacePanel.locator('input[name="mode"][value="custom"]').check({ force: true });
+    await modeOf(video, "custom");
+    await video.goto(`${origin}?gm=live&gmstore=2`);
+    await modeOf(video, "custom");
+    assert.equal(JSON.parse(gmStores.get("2").get("sync")).mode, "custom");
     // A manager whose storage never answers must not keep the settings, and so the takeover,
     // from loading: after three seconds this site's localStorage is used as before.
     const silentContext = await browser.newContext();
@@ -325,7 +355,7 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
     await silent.goto(`${origin}?gm=silent`);
     await silent.waitForFunction(() => window.__biliThreadRipperDebug?.getSettings().mode === "overseas", null, { timeout: 8000 });
     assert.ok(Date.now() - silentStarted < 6000);
-    console.log("PASS 设置存在脚本管理器里：各子域共用一份，第一次会导入这个子域原来的设置，其他标签页马上同步（不报告变化的管理器在切回标签页时同步），管理器的存储不回应时退回本站 localStorage");
+    console.log("PASS 设置存在脚本管理器里：各子域共用一份，第一次会导入这个子域原来的设置，其他标签页马上同步（不报告变化的管理器在切回标签页时同步），换到另一个管理器（比如暴力猴）时带上最新的设置，诊断报告写明是哪个管理器，管理器的存储不回应时退回本站 localStorage");
 
     assert.deepEqual(errors, []);
     console.log("PASS 没有脚本错误");

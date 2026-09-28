@@ -1437,7 +1437,7 @@
         const { timeline = [], ...rest } = debug;
         // Node names and states only: no download address or account data.
         return JSON.stringify({
-          version: stats.version, at: Math.round(performance.now()), settings: { takeover: settings.takeover, mode: settings.mode, customHosts: settings.customHosts.slice(), concurrency: settings.concurrency, codec: nativeCodec() || "default" },
+          version: stats.version, scriptManager: document.documentElement?.getAttribute("data-btr-userscript-manager") || "", at: Math.round(performance.now()), settings: { takeover: settings.takeover, mode: settings.mode, customHosts: settings.customHosts.slice(), concurrency: settings.concurrency, codec: nativeCodec() || "default" },
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },

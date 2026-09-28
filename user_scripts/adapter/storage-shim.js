@@ -7,6 +7,11 @@
 // does not answer, the settings stay in this site's localStorage as before, which is kept per
 // subdomain. Changes made in another tab arrive from the manager, or, where the manager does
 // not report them, are read again when this tab comes back into view.
+//
+// What the manager holds is also copied to this site's localStorage. Each manager keeps its
+// own storage, so a viewer who moves to another one (say from Tampermonkey to
+// Violentmonkey) would otherwise start over: the new one takes the settings over from that
+// copy the first time it runs.
 const chrome = (() => {
   const PREFIX = "BTR_Userscript.";
   const AREAS = ["sync", "local"];
@@ -80,18 +85,23 @@ const chrome = (() => {
   const cache = {};
   const loads = {};
   let backend = mark ? managerBackend : localBackend;
+  const keepCopy = (area, value) => {
+    if (backend !== managerBackend) return;
+    try { localStorage.setItem(PREFIX + area, JSON.stringify(value)); } catch (_error) {}
+  };
   // A manager that marked the page but never answers must not keep the settings from loading.
   const load = (area) => {
     loads[area] ||= (backend === managerBackend
       ? Promise.race([backend.load(area), new Promise((_resolve, reject) => setTimeout(() => reject(new Error("no answer")), 3000))])
         .catch(() => { backend = localBackend; return backend.load(area); })
-      : backend.load(area)).then((value) => { cache[area] = value; return value; });
+      : backend.load(area)).then((value) => { cache[area] = value; keepCopy(area, value); return value; });
     return loads[area];
   };
   // What the storage now holds after a change, from this tab or from another one.
   const settle = (area, value) => {
     const before = cache[area] || {};
     cache[area] = value;
+    keepCopy(area, value);
     notify(diff(before, value), area);
   };
 
