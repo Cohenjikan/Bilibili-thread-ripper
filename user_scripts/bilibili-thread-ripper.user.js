@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 线程撕裂者
 // @namespace    https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @version      2026.9.27.1
+// @version      2026.9.29.1
 // @description  保留哔哩哔哩原生播放器，通过多 CDN、多 Range 并发下载改善视频缓冲速度。
 // @icon         https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/icons/icon-128.png
 // @author       MrTangLuyao
@@ -966,7 +966,16 @@ const chrome = (() => {
   // connections that bring nothing only add risk. A server refusing the load (412, 429)
   // steps it back too, and nothing climbs past a refused level until it has rested. The
   // level is kept across videos on the same page; a new page starts at 8 again.
+  //
+  // Each start (a new video, a seek outside the buffer) opens with at least 16 threads: the
+  // first seconds are when a slow node turns into a spinning wheel. Once the buffer is well
+  // ahead, the count steps back down to the level the page had before. A sign of not keeping
+  // up meanwhile climbs as usual and ends the start there; so does half a minute without
+  // catching up. From then on the rules above carry on.
   const AUTO_LADDER = Object.freeze([8, 12, 16, 24, 32]);
+  const AUTO_STARTUP_LEVEL = 2;
+  const AUTO_STARTUP_COMFORT_SECONDS = 15;
+  const AUTO_STARTUP_MAX_MS = 30000;
   const AUTO_STEP_COOLDOWN_MS = 2500;
   const AUTO_TRIAL_MS = 10000;
   const AUTO_WINDOW_MS = 5000;
@@ -986,7 +995,9 @@ const chrome = (() => {
       buckets: [], lastActivityAt: -Infinity,
       // Time the connections spent saturated: intervals of { from, to } within the window.
       saturated: false, saturatedSince: 0, saturatedSpans: [],
-      aheadSamples: [], pressureSince: 0
+      aheadSamples: [], pressureSince: 0,
+      // The start of a session while it runs above the page's own level: { base, until }.
+      startup: null
     };
     const threads = () => AUTO_LADDER[state.level];
 
@@ -1050,7 +1061,18 @@ const chrome = (() => {
       }
       if (next >= AUTO_LADDER.length) return false;
       setLevel(next, reason, { from: state.level, level: next, at, baseline: throughput(at), stalled: false });
+      // Not keeping up even with the start's threads: the start ends at this level.
+      state.startup = null;
       return true;
+    }
+
+    // How high a start may go: up to 16 threads, but not onto or past a level the server
+    // refused (a fruitless trial does not hold it back; the start comes down on its own).
+    function startupLevel(at) {
+      if (resting(state.level, at)?.hard) return state.level;
+      let level = state.level;
+      while (level < AUTO_STARTUP_LEVEL && !resting(level + 1, at)?.hard) level += 1;
+      return level;
     }
 
     function stepDown(target, restLevel, reason, restMs, hard) {
@@ -1109,6 +1131,13 @@ const chrome = (() => {
       buffer(ahead, playing, at = now()) {
         state.aheadSamples.push({ at, ahead });
         while (state.aheadSamples.length && at - state.aheadSamples[0].at > AUTO_PRESSURE_MS + AUTO_BUCKET_MS) state.aheadSamples.shift();
+        // The start: once well ahead, one step back down per cooldown towards the page's level.
+        const start = state.startup;
+        if (start && at >= start.until) state.startup = null;
+        else if (start && ahead >= AUTO_STARTUP_COMFORT_SECONDS && at - state.changedAt >= AUTO_STEP_COOLDOWN_MS) {
+          if (state.level > start.base) setLevel(state.level - 1, `开头已经跟上，线程数降到 ${AUTO_LADDER[state.level - 1]}`, null);
+          if (state.level <= start.base) state.startup = null;
+        }
         const earlier = state.aheadSamples.find((item) => at - item.at >= AUTO_PRESSURE_MS);
         const downloading = at - state.lastActivityAt < AUTO_ACTIVITY_MS;
         const pressed = playing && downloading && ahead < AUTO_LOW_BUFFER_SECONDS && earlier && ahead <= earlier.ahead + 0.05;
@@ -1127,14 +1156,21 @@ const chrome = (() => {
       pushback(status) {
         return stepDown(Math.max(0, state.level - 1), state.level, `服务器返回 ${status}`, AUTO_PUSHBACK_REST_MS, true);
       },
-      // A new playback session: what the buffer did before means nothing now.
+      // A new playback session: what the buffer did before means nothing now, and the start
+      // runs with more threads. A session that begins while another one's start is still
+      // running keeps the page's own level to come back to.
       newSession() {
+        const at = now();
         state.aheadSamples.length = 0;
         state.pressureSince = 0;
         state.trial = null;
         state.buckets.length = 0;
         state.saturatedSpans.length = 0;
-        if (state.saturated) state.saturatedSince = now();
+        if (state.saturated) state.saturatedSince = at;
+        const base = state.startup ? state.startup.base : state.level;
+        const target = startupLevel(at);
+        if (target > state.level) setLevel(target, `开头先用 ${AUTO_LADDER[target]} 线程`, null);
+        state.startup = state.level > base ? { base, until: at + AUTO_STARTUP_MAX_MS } : null;
       },
       status() {
         const at = now();
@@ -1143,14 +1179,15 @@ const chrome = (() => {
           throughputBps: Math.round(throughput(at)), saturation: Math.round(saturation(at) * 100) / 100,
           buckets: state.buckets.length, activityAgeMs: Math.round(at - state.lastActivityAt),
           resting: [...state.resting.entries()].filter(([, rest]) => rest.until > at).map(([level, rest]) => ({ threads: AUTO_LADDER[level], hard: rest.hard, forMs: Math.round(rest.until - at) })),
-          trial: state.trial ? { from: AUTO_LADDER[state.trial.from], level: AUTO_LADDER[state.trial.level], ageMs: Math.round(at - state.trial.at), baselineBps: Math.round(state.trial.baseline), stalled: state.trial.stalled } : null
+          trial: state.trial ? { from: AUTO_LADDER[state.trial.from], level: AUTO_LADDER[state.trial.level], ageMs: Math.round(at - state.trial.at), baselineBps: Math.round(state.trial.baseline), stalled: state.trial.stalled } : null,
+          startup: state.startup ? { base: AUTO_LADDER[state.startup.base], forMs: Math.round(state.startup.until - at) } : null
         };
       },
       reset() {
         state.level = 0; state.changedAt = 0; state.reason = "起步"; state.steps = 0; state.trial = null;
         state.resting.clear(); state.buckets.length = 0; state.lastActivityAt = -Infinity;
         state.saturated = false; state.saturatedSince = 0; state.saturatedSpans.length = 0;
-        state.aheadSamples.length = 0; state.pressureSince = 0;
+        state.aheadSamples.length = 0; state.pressureSince = 0; state.startup = null;
       }
     });
   }
@@ -3313,7 +3350,7 @@ const chrome = (() => {
       urlDeadlineSeconds,
       video,
       getDebug: () => ({
-        version: "2026.9.27.1",
+        version: "2026.9.29.1",
         architecture: "bilibili-native-ui-progressive-mse-0.8-core",
         quality: qualityLabel(selectedVideo),
         qualityId: Number(selectedVideo?.id) || 0,
@@ -4285,7 +4322,7 @@ const chrome = (() => {
   `;
 
   const LAUNCHER_CSS = `
-    .btr-launcher { position: fixed; right: 76px; bottom: 116px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: #fb7299; color: #fff; font: 700 13px/1 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; letter-spacing: .3px; cursor: grab; opacity: .35; touch-action: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); transition: opacity 160ms ease, transform 160ms ease, left 180ms ease, right 180ms ease; }
+    .btr-launcher { position: fixed; right: 76px; bottom: 116px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: #fb7299; color: #fff; font: 700 13px/1 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; letter-spacing: .3px; cursor: grab; opacity: .6; touch-action: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); transition: opacity 160ms ease, transform 160ms ease, left 180ms ease, right 180ms ease; }
     .btr-launcher:hover, .btr-launcher:focus-visible { opacity: 1; transform: scale(1.06); }
     .btr-launcher:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     .btr-launcher.dragging { cursor: grabbing; opacity: 1; transform: scale(1.1); transition: opacity 160ms ease, transform 160ms ease; }
@@ -4801,7 +4838,7 @@ const chrome = (() => {
   });
 
   const stats = {
-    version: "2026.9.27.1",
+    version: "2026.9.29.1",
     architecture: "bilibili-native-ui-progressive-mse-0.8-core",
     mode: settings.mode,
     playerState: "waiting",
@@ -6166,7 +6203,7 @@ const chrome = (() => {
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },
-      version: "2026.9.27.1"
+      version: "2026.9.29.1"
     })
   });
   publish();
@@ -6420,7 +6457,7 @@ const chrome = (() => {
 
   // ---- stats for the settings panel ----
   const stats = {
-    version: "2026.9.27.1",
+    version: "2026.9.29.1",
     architecture: "live-segment-ripper",
     mode: "live",
     playerState: "waiting",
@@ -6884,7 +6921,7 @@ const chrome = (() => {
         hosts: context.pool.status()
       },
       getStats: () => ({ ...stats }),
-      version: "2026.9.27.1"
+      version: "2026.9.29.1"
     })
   });
   publish();
@@ -7201,7 +7238,7 @@ const chrome = (() => {
   "use strict";
 
   const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
-  const VERSION = "2026.9.27.1";
+  const VERSION = "2026.9.29.1";
   const notices = globalThis.__BTR_NOTIFICATION_VIEW__;
   const ERROR_NOTICE_ID = "__bilibili_thread_ripper_error_notice__";
   const ERROR_NOTICE_STYLE_ID = "__bilibili_thread_ripper_error_notice_style__";
