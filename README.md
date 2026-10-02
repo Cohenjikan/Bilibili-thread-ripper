@@ -40,7 +40,7 @@
 [视频安装步骤(参考2P 通过油猴脚本安装)](https://www.bilibili.com/video/BV1Teec6BE3s)
 
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件 或者 [暴力猴](https://violentmonkey.github.io/) 插件。
+1. 安装 [暴力猴(推荐)](https://violentmonkey.github.io/) 插件 或者 [Tampermonkey](https://www.tampermonkey.net/)  插件。（部分用户反馈 Tampermonkey 正式版有时候接管不稳定，换 beta 版本可以解决）
 2. ⚠️（对于Chromium内核如Chrome/Edge **必做**）在扩展程序内，点击 Tampermonkey 或 暴力猴 插件的 详情，打开**允许运行用户脚本**。
 
    <img src="pics/install-demo.gif" alt="在扩展程序里打开脚本管理器的“允许运行用户脚本”" width="720">
@@ -48,7 +48,7 @@
 3. ❗点这里：[**安装线程撕裂者**](https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/user_scripts/bilibili-thread-ripper.user.js)
 4. 打开任意 B 站视频，安装完成。你应该能打开设置菜单 能看到BTR的悬浮球设置按钮。
 
-#### ⚠️如果是早期通过视频了解的这个插件 注意：针对Chrome的独立版插件已经停止更新。请卸载独立插件版插件并按步骤安装基于油猴脚本的新版BTR。⚠️
+#### 如果是早期通过视频了解的这个插件 注意：针对Chrome的独立版插件已经停止更新。请卸载独立插件版插件并按步骤安装基于油猴脚本的新版BTR。
 
 #### ⚠️注意⚠️
 
