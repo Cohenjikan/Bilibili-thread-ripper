@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 线程撕裂者
 // @namespace    https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @version      2026.9.29.2
+// @version      2026.10.4.1
 // @description  保留哔哩哔哩原生播放器，通过多 CDN、多 Range 并发下载改善视频缓冲速度。
 // @icon         https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/icons/icon-128.png
 // @author       MrTangLuyao
@@ -3360,7 +3360,7 @@ const chrome = (() => {
       urlDeadlineSeconds,
       video,
       getDebug: () => ({
-        version: "2026.9.29.2",
+        version: "2026.10.4.1",
         architecture: "bilibili-native-ui-progressive-mse-0.8-core",
         quality: qualityLabel(selectedVideo),
         qualityId: Number(selectedVideo?.id) || 0,
@@ -4379,7 +4379,7 @@ const chrome = (() => {
     const parse = (text) => { try { return JSON.parse(text); } catch (_error) { return text; } };
     const sections = [
       ["环境", {
-        BTR: "2026.9.29.2",
+        BTR: "2026.10.4.1",
         脚本管理器: document.documentElement?.getAttribute("data-btr-userscript-manager") || "未知",
         浏览器: navigator.userAgent,
         页面: `${location.origin}${location.pathname}`,
@@ -4934,7 +4934,7 @@ const chrome = (() => {
   });
 
   const stats = {
-    version: "2026.9.29.2",
+    version: "2026.10.4.1",
     architecture: "bilibili-native-ui-progressive-mse-0.8-core",
     mode: settings.mode,
     playerState: "waiting",
@@ -5217,7 +5217,39 @@ const chrome = (() => {
       ? 1
       : Math.max(1, Number(new URLSearchParams(location.search).get("p")) || 1);
     const videoKey = bvid ? bvid.toLowerCase() : `av${aid}`;
-    return { aid, bvid, part, key: `${videoKey}:p${part}`, videoKey };
+    const node = interactiveNode(videoKey, part);
+    return { aid, bvid, part, key: nodeRouteKey(videoKey, part, node), videoKey, cid: node };
+  }
+
+  // An interactive video (互动视频) plays its branches as separate CIDs under the same BVID
+  // and address; the player itself knows which branch is on. The first branch keeps the
+  // ordinary route key, so the takeover does not start over when the player reports it.
+  // Returns the CID of the branch playing now when it is not the first one, otherwise 0.
+  function interactiveFirstCid(videoKey, part) {
+    try {
+      const state = root.__INITIAL_STATE__;
+      if (stateIdentity(state)?.videoKey !== videoKey || Number(state.videoData?.rights?.is_stein_gate) !== 1) return 0;
+      return Number(state.videoData.pages?.[part - 1]?.cid || state.videoData.cid) || 0;
+    } catch (_error) {
+      return 0;
+    }
+  }
+
+  function interactiveNode(videoKey, part) {
+    const first = interactiveFirstCid(videoKey, part);
+    if (!first) return 0;
+    try {
+      const manifest = root.player?.getManifest?.();
+      if (String(manifest?.bvid || "").toLowerCase() !== videoKey && `av${Number(manifest?.aid) || 0}` !== videoKey) return 0;
+      const cid = Number(manifest.cid) || 0;
+      return cid && cid !== first ? cid : 0;
+    } catch (_error) {
+      return 0;
+    }
+  }
+
+  function nodeRouteKey(videoKey, part, node) {
+    return node ? `${videoKey}:p${part}:n${node}` : `${videoKey}:p${part}`;
   }
 
   function stateIdentity(state) {
@@ -5263,7 +5295,8 @@ const chrome = (() => {
     routePlayinfo.delete(identity.key);
     routePlayinfo.set(identity.key, playinfo);
     if (Number(cid) > 0) routeCids.set(identity.key, Number(cid));
-    while (routePlayinfo.size > 8) {
+    // An interactive video's player asks for the next branches ahead of time, several at once.
+    while (routePlayinfo.size > 16) {
       const oldest = routePlayinfo.keys().next().value;
       routePlayinfo.delete(oldest);
       routeCids.delete(oldest);
@@ -5318,14 +5351,23 @@ const chrome = (() => {
     const videoKey = requestedVideoKey(url);
     const cid = requestedCid(url);
     if (!identity || !videoKey || videoKey !== identity.videoKey || !cid) return null;
-    return { routeKey: identity.key, videoKey, cid };
+    // In an interactive video the request names its branch.
+    const first = interactiveFirstCid(identity.videoKey, identity.part);
+    const routeKey = first ? nodeRouteKey(identity.videoKey, identity.part, cid === first ? 0 : cid) : identity.key;
+    return { routeKey, videoKey, cid };
   }
 
   function observePlayinfo(url, payload, requestContext = null) {
     if (!/\/x\/player\/(?:wbi\/)?playurl/i.test(String(url)) || !isDashPlayinfo(payload)) return;
     const context = requestContext || capturePlayinfoRequest(url);
     const identity = routeIdentity();
-    if (!context || !identity || context.routeKey !== identity.key || context.videoKey !== identity.videoKey) return;
+    if (!context || !identity || context.videoKey !== identity.videoKey) return;
+    // A branch the interactive player fetched ahead of time: kept for when it plays.
+    if (context.routeKey !== identity.key && interactiveFirstCid(identity.videoKey, identity.part)) {
+      cachePlayinfo({ key: context.routeKey }, payload, context.cid);
+      return;
+    }
+    if (context.routeKey !== identity.key) return;
     const cid = Number(context.cid) || 0;
     const expectedCid = routeCids.get(identity.key) || 0;
     // The same BVID can contain many parts. A late response from the previous
@@ -5447,7 +5489,9 @@ const chrome = (() => {
   // refresh: new addresses for the video that is already playing. Its CID is known by then,
   // so the video information is not asked for again, and the takeover notices stay quiet.
   async function fetchRoutePlayinfo(identity, signal, refresh = false) {
-    let cid = refresh ? Number(routeCids.get(identity.key)) || 0 : 0;
+    // A branch of an interactive video carries its own CID; the video information only
+    // names the first branch.
+    let cid = Number(identity.cid) || (refresh ? Number(routeCids.get(identity.key)) || 0 : 0);
     let canonicalBvid = String(identity.bvid || "");
     let canonicalAid = Number(identity.aid) || 0;
     if (!cid) {
@@ -6299,7 +6343,7 @@ const chrome = (() => {
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },
-      version: "2026.9.29.2"
+      version: "2026.10.4.1"
     })
   });
   publish();
@@ -6553,7 +6597,7 @@ const chrome = (() => {
 
   // ---- stats for the settings panel ----
   const stats = {
-    version: "2026.9.29.2",
+    version: "2026.10.4.1",
     architecture: "live-segment-ripper",
     mode: "live",
     playerState: "waiting",
@@ -7017,7 +7061,7 @@ const chrome = (() => {
         hosts: context.pool.status()
       },
       getStats: () => ({ ...stats }),
-      version: "2026.9.29.2"
+      version: "2026.10.4.1"
     })
   });
   publish();
@@ -7334,7 +7378,7 @@ const chrome = (() => {
   "use strict";
 
   const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
-  const VERSION = "2026.9.29.2";
+  const VERSION = "2026.10.4.1";
   const notices = globalThis.__BTR_NOTIFICATION_VIEW__;
   const ERROR_NOTICE_ID = "__bilibili_thread_ripper_error_notice__";
   const ERROR_NOTICE_STYLE_ID = "__bilibili_thread_ripper_error_notice_style__";
