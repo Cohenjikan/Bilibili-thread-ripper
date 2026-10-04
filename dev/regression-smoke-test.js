@@ -7,6 +7,7 @@ const { chromium } = require("playwright");
   const tests = [
     ["navigation-test.html", "navigation-result"],
     ["multipart-navigation-test.html", "multipart-navigation-result"],
+    ["interactive-navigation-test.html", "interactive-navigation-result"],
     ["takeover-error-test.html", "takeover-error-result"],
     ["error-notice-test.html", "error-notice-result"],
     ["floating-button-test.html", "result"],
