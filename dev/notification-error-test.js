@@ -47,7 +47,7 @@ function mockChrome() {
     assert.equal(await popup.locator("#debug-notices").isChecked(), false);
     assert.equal(await popup.locator("#debug-filters").isVisible(), false);
     assert.equal(await popup.locator("[data-debug-category]:checked").count(), 6);
-    assert.equal(await popup.locator("#thread-value").textContent(), "8");
+    assert.equal(await popup.locator("#thread-value").textContent(), "自动");
     assert.equal(await page.evaluate(() => __biliThreadRipperDebug.getSettings().errorNotices), false);
     assert.equal(await page.evaluate(() => __biliThreadRipperDebug.getSettings().concurrency), 8);
     // Red errors stay hidden until the user turns the switch on.

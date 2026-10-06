@@ -121,7 +121,8 @@ const settingsOf = page => page.evaluate(() => __biliThreadRipperDebug.getSettin
     await page.waitForFunction(() => __biliThreadRipperDebug.getSettings().takeover === "compat");
     await panel.locator('input[name="takeover"][value="full"]').check({ force: true });
     await page.waitForFunction(() => __biliThreadRipperDebug.getSettings().takeover === "full");
-    assert.equal(await panel.locator("#thread-value").textContent(), "8");
+    assert.equal(await panel.locator("#thread-value").textContent(), "自动");
+    assert.match(await panel.locator('label[for="auto-concurrency"]').textContent(), /^自动线程数（推荐）/);
     assert.equal(await panel.locator("#error-notices").isChecked(), false);
     assert.equal(await panel.locator("#debug-filters").isVisible(), false);
     await page.waitForFunction(() => __userscriptTest.statusRequests > 0);

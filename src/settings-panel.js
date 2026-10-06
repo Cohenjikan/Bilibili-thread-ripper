@@ -70,7 +70,7 @@
           <output id="thread-value" for="concurrency">8</output>
         </div>
         <div class="auto-row">
-          <label for="auto-concurrency">自动线程数<small>BTR将智能选择需要的线程数。</small></label>
+          <label for="auto-concurrency">自动线程数（推荐）<small>BTR将智能选择需要的线程数。</small></label>
           <label class="switch"><input id="auto-concurrency" type="checkbox" aria-label="自动线程数"><span></span></label>
         </div>
         <div class="slider">
@@ -318,7 +318,8 @@
       const index = THREAD_OPTIONS.indexOf(Number(threads));
       const safe = index < 0 ? 1 : index;
       concurrency.value = String(safe);
-      threadValue.value = String(THREAD_OPTIONS[safe]);
+      // In the automatic mode the badge says so; the slider keeps the viewer's own count.
+      threadValue.value = autoConcurrency.checked ? "自动" : String(THREAD_OPTIONS[safe]);
       concurrency.setAttribute("aria-valuetext", String(THREAD_OPTIONS[safe]));
       sliderFill.style.width = `${safe / (THREAD_OPTIONS.length - 1) * 100}%`;
     }
@@ -375,8 +376,8 @@
     function render(settings) {
       enabled.checked = settings.enabled;
       for (const radio of shadow.querySelectorAll('input[name="takeover"]')) radio.checked = radio.value === settings.takeover;
-      setSlider(settings.concurrency);
       autoConcurrency.checked = settings.autoConcurrency === true;
+      setSlider(settings.concurrency);
       concurrency.disabled = autoConcurrency.checked;
       concurrency.closest(".controls").classList.toggle("auto", autoConcurrency.checked);
       setMode(settings.mode);
