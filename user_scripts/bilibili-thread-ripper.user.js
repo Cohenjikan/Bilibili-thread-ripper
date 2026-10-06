@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 线程撕裂者
 // @namespace    https://github.com/MrTangLuyao/Bilibili-thread-ripper
-// @version      2026.10.4.1
+// @version      2026.10.7.1
 // @description  保留哔哩哔哩原生播放器，通过多 CDN、多 Range 并发下载改善视频缓冲速度。
 // @icon         https://raw.githubusercontent.com/MrTangLuyao/Bilibili-thread-ripper/main/icons/icon-128.png
 // @author       MrTangLuyao
@@ -323,7 +323,7 @@ const chrome = (() => {
       errorNotices: source.errorNotices === true,
       debugCategories: Object.fromEntries(["takeover", "playback", "download", "buffer", "settings", "other"].map(key => [key, source.debugCategories?.[key] !== false])),
       concurrency: allowed.includes(requested) ? requested : 8,
-      // 自动线程数: the downloader picks the thread count itself, between 8 and 32, and
+      // 自动线程数: the downloader picks the thread count itself, between 8 and 64, and
       // `concurrency` above is only what the viewer set by hand. Off unless asked for.
       autoConcurrency: source.autoConcurrency === true,
       minChunkBytes: 64 * 1024,
@@ -968,7 +968,7 @@ const chrome = (() => {
   }
 
   // 自动线程数. One controller for the whole page: the thread count starts at 8 and climbs a
-  // ladder towards 32 on every sign that the download is not keeping up with playback
+  // ladder towards 64 on every sign that the download is not keeping up with playback
   // (the player stalls; a low buffer stops growing while bytes keep arriving; a
   // connection waits too long for its first byte while every slot is busy). Every step up
   // is a trial: ten seconds later the bytes per second must have grown, otherwise the
@@ -982,7 +982,7 @@ const chrome = (() => {
   // ahead, the count steps back down to the level the page had before. A sign of not keeping
   // up meanwhile climbs as usual and ends the start there; so does half a minute without
   // catching up. From then on the rules above carry on.
-  const AUTO_LADDER = Object.freeze([8, 12, 16, 24, 32]);
+  const AUTO_LADDER = Object.freeze([8, 12, 16, 24, 32, 48, 64]);
   const AUTO_STARTUP_LEVEL = 2;
   const AUTO_STARTUP_COMFORT_SECONDS = 15;
   const AUTO_STARTUP_MAX_MS = 30000;
@@ -3360,7 +3360,7 @@ const chrome = (() => {
       urlDeadlineSeconds,
       video,
       getDebug: () => ({
-        version: "2026.10.4.1",
+        version: "2026.10.7.1",
         architecture: "bilibili-native-ui-progressive-mse-0.8-core",
         quality: qualityLabel(selectedVideo),
         qualityId: Number(selectedVideo?.id) || 0,
@@ -4215,7 +4215,7 @@ const chrome = (() => {
           <output id="thread-value" for="concurrency">8</output>
         </div>
         <div class="auto-row">
-          <label for="auto-concurrency">自动线程数<small>BTR将智能选择需要的线程数。</small></label>
+          <label for="auto-concurrency">自动线程数（推荐）<small>BTR将智能选择需要的线程数。</small></label>
           <label class="switch"><input id="auto-concurrency" type="checkbox" aria-label="自动线程数"><span></span></label>
         </div>
         <div class="slider">
@@ -4379,7 +4379,7 @@ const chrome = (() => {
     const parse = (text) => { try { return JSON.parse(text); } catch (_error) { return text; } };
     const sections = [
       ["环境", {
-        BTR: "2026.10.4.1",
+        BTR: "2026.10.7.1",
         脚本管理器: document.documentElement?.getAttribute("data-btr-userscript-manager") || "未知",
         浏览器: navigator.userAgent,
         页面: `${location.origin}${location.pathname}`,
@@ -4463,7 +4463,8 @@ const chrome = (() => {
       const index = THREAD_OPTIONS.indexOf(Number(threads));
       const safe = index < 0 ? 1 : index;
       concurrency.value = String(safe);
-      threadValue.value = String(THREAD_OPTIONS[safe]);
+      // In the automatic mode the badge says so; the slider keeps the viewer's own count.
+      threadValue.value = autoConcurrency.checked ? "自动" : String(THREAD_OPTIONS[safe]);
       concurrency.setAttribute("aria-valuetext", String(THREAD_OPTIONS[safe]));
       sliderFill.style.width = `${safe / (THREAD_OPTIONS.length - 1) * 100}%`;
     }
@@ -4520,8 +4521,8 @@ const chrome = (() => {
     function render(settings) {
       enabled.checked = settings.enabled;
       for (const radio of shadow.querySelectorAll('input[name="takeover"]')) radio.checked = radio.value === settings.takeover;
-      setSlider(settings.concurrency);
       autoConcurrency.checked = settings.autoConcurrency === true;
+      setSlider(settings.concurrency);
       concurrency.disabled = autoConcurrency.checked;
       concurrency.closest(".controls").classList.toggle("auto", autoConcurrency.checked);
       setMode(settings.mode);
@@ -4934,7 +4935,7 @@ const chrome = (() => {
   });
 
   const stats = {
-    version: "2026.10.4.1",
+    version: "2026.10.7.1",
     architecture: "bilibili-native-ui-progressive-mse-0.8-core",
     mode: settings.mode,
     playerState: "waiting",
@@ -6244,7 +6245,7 @@ const chrome = (() => {
         const cdn = settings.mode === "overseas" ? "海外 CDN"
           : settings.mode !== "custom" ? "大陆 CDN"
             : settings.customHosts.length ? `自定义的 ${settings.customHosts.length} 个服务器` : "大陆 CDN（自定义里还没选服务器）";
-        const threads = settings.autoConcurrency ? `线程数自动调整（当前 ${autoThreads?.threads() || 8}，8 到 32）` : `开启 ${settings.concurrency} 条下载线程`;
+        const threads = settings.autoConcurrency ? `线程数自动调整（当前 ${autoThreads?.threads() || 8}，8 到 64）` : `开启 ${settings.concurrency} 条下载线程`;
         notices?.log("设置已经生效", `${settings.takeover === "compat" ? "兼容模式" : "全接管"}，使用${cdn}，${threads}。`, "success", "", undefined, "settings");
       }
       stats.autoThreads = settings.autoConcurrency ? autoThreads?.threads() || 0 : 0;
@@ -6343,7 +6344,7 @@ const chrome = (() => {
           state: stats.playerState, lastError: stats.lastError, player: rest, nodes: stats.cdnHosts.map((item) => ({ ...item })), bannedNodes: cdnBans?.hosts?.() || [], page: pageEvents.slice(), timeline
         }, null, 1);
       },
-      version: "2026.10.4.1"
+      version: "2026.10.7.1"
     })
   });
   publish();
@@ -6597,7 +6598,7 @@ const chrome = (() => {
 
   // ---- stats for the settings panel ----
   const stats = {
-    version: "2026.10.4.1",
+    version: "2026.10.7.1",
     architecture: "live-segment-ripper",
     mode: "live",
     playerState: "waiting",
@@ -7061,7 +7062,7 @@ const chrome = (() => {
         hosts: context.pool.status()
       },
       getStats: () => ({ ...stats }),
-      version: "2026.10.4.1"
+      version: "2026.10.7.1"
     })
   });
   publish();
@@ -7378,7 +7379,7 @@ const chrome = (() => {
   "use strict";
 
   const CHANNEL = "__BILI_RANGE_ACCELERATOR_V1__";
-  const VERSION = "2026.10.4.1";
+  const VERSION = "2026.10.7.1";
   const notices = globalThis.__BTR_NOTIFICATION_VIEW__;
   const ERROR_NOTICE_ID = "__bilibili_thread_ripper_error_notice__";
   const ERROR_NOTICE_STYLE_ID = "__bilibili_thread_ripper_error_notice_style__";
