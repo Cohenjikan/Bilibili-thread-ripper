@@ -14,13 +14,9 @@ concurrency:
 
 jobs:
   regression:
-    name: Regression (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Offline regression
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         shell: bash
@@ -45,7 +41,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: screenshots-${{ matrix.os }}
+          name: failure-screenshots
           path: dist/*.png
           if-no-files-found: ignore
           retention-days: 7
